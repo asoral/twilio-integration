@@ -122,7 +122,7 @@ class IncomingCall:
 		self.to_number = to_number
 		self.meta = meta
 
-	def process(self):
+	def process(self,abc):
 		"""Process the incoming call
 		* Figure out who is going to pick the call (call attender)
 		* Check call attender settings and forward the call to Phone
@@ -135,10 +135,19 @@ class IncomingCall:
 			resp = VoiceResponse()
 			resp.say(_('Agent is unavailable to take the call, please call after some time.'))
 			return resp
-
+		
 		if attender['call_receiving_device'] == 'Phone':
+			if abc:
+				user=frappe.db.get_value("User",{"mobile_no":attender['mobile_no']},["name"])
+				doc=frappe.get_doc("Call Log",abc)
+				doc.custom_voip_user=user
+				doc.save(ignore_permissions=True)	
 			return twilio.generate_twilio_dial_response(self.from_number, attender['mobile_no'])
 		else:
+			if abc:
+				doc=frappe.get_doc("Call Log",abc)
+				doc.custom_voip_user=attender['name']
+				doc.save(ignore_permissions=True)
 			return twilio.generate_twilio_client_response(twilio.safe_identity(attender['name']))
 
 class TwilioCallDetails:

@@ -40,7 +40,7 @@ def voice(**kwargs):
 	def _get_caller_number(caller):
 		identity = caller.replace('client:', '').strip()
 		user = Twilio.emailid_from_identity(identity)
-		return frappe.db.get_value('Voice Call Settings', user, 'twilio_number')
+		return frappe.db.get_value('Voice Call Settings', user, 'twilio_number'),user
 
 	args = frappe._dict(kwargs)
 	twilio = Twilio.connect()
@@ -52,19 +52,23 @@ def voice(**kwargs):
 
 	# Generate TwiML instructions to make a call
 	from_number = _get_caller_number(args.Caller)
-	resp = twilio.generate_twilio_dial_response(from_number, args.To)
+	resp = twilio.generate_twilio_dial_response(from_number[0], args.To)
 
-	call_details = TwilioCallDetails(args, call_from=from_number)
-	create_call_log(call_details)
+	call_details = TwilioCallDetails(args, call_from=from_number[0])
+	abc=create_call_log(call_details)
+	if abc:
+		doc=frappe.get_doc("Call Log",abc)
+		doc.custom_voip_user=from_number[1]
+		doc.save(ignore_permissions=True)
 	return Response(resp.to_xml(), mimetype='text/xml')
 
 @frappe.whitelist(allow_guest=True)
 def twilio_incoming_call_handler(**kwargs):
 	args = frappe._dict(kwargs)
 	call_details = TwilioCallDetails(args)
-	create_call_log(call_details)
-
-	resp = IncomingCall(args.From, args.To).process()
+	abc=create_call_log(call_details)
+	resp = IncomingCall(args.From, args.To).process(abc)
+	
 	return Response(resp.to_xml(), mimetype='text/xml')
 
 @frappe.whitelist()
@@ -77,6 +81,7 @@ def create_call_log(call_details: TwilioCallDetails):
 	call_log.flags.ignore_permissions = True
 	call_log.save()
 	frappe.db.commit()
+	return call_log.name
 
 @frappe.whitelist()
 def update_call_log(call_sid, status=None):
