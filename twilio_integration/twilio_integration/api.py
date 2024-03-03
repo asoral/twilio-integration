@@ -59,6 +59,7 @@ def voice(**kwargs):
 	if abc:
 		doc=frappe.get_doc("Call Log",abc)
 		doc.custom_voip_user=from_number[1]
+		doc.custom_call_info=call_details
 		doc.save(ignore_permissions=True)
 	return Response(resp.to_xml(), mimetype='text/xml')
 
