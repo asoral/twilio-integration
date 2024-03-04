@@ -86,7 +86,7 @@
    "hide_border": 0,
    "hide_days": 0,
    "hide_seconds": 0,
-   "idx": 6,
+   "idx": 7,
    "ignore_user_permissions": 0,
    "ignore_xss_filter": 0,
    "in_global_search": 0,
@@ -124,7 +124,7 @@
   }
  ],
  "custom_perms": [
- 
+  
  ],
  "doctype": "Call Log",
  "links": [],
@@ -134,7 +134,30 @@
    "_comments": null,
    "_liked_by": null,
    "_user_tags": null,
-   "creation": "2024-03-03 23:27:00.063479",
+   "creation": "2024-03-04 18:20:33.329262",
+   "default_value": null,
+   "doc_type": "Call Log",
+   "docstatus": 0,
+   "doctype_or_field": "DocField",
+   "field_name": "call_received_by",
+   "idx": 0,
+   "is_system_generated": 0,
+   "modified": "2024-03-04 18:20:33.329262",
+   "modified_by": "ajogdand@dexciss.com",
+   "module": null,
+   "name": "Call Log-call_received_by-ignore_user_permissions",
+   "owner": "ajogdand@dexciss.com",
+   "property": "ignore_user_permissions",
+   "property_type": "Check",
+   "row_name": null,
+   "value": "1"
+  },
+  {
+   "_assign": null,
+   "_comments": null,
+   "_liked_by": null,
+   "_user_tags": null,
+   "creation": "2024-03-04 18:20:33.043328",
    "default_value": null,
    "doc_type": "Call Log",
    "docstatus": 0,
@@ -142,15 +165,15 @@
    "field_name": null,
    "idx": 0,
    "is_system_generated": 0,
-   "modified": "2024-03-03 23:27:00.063479",
-   "modified_by": "Administrator",
+   "modified": "2024-03-04 18:20:33.043328",
+   "modified_by": "ajogdand@dexciss.com",
    "module": null,
    "name": "Call Log-main-field_order",
-   "owner": "Administrator",
+   "owner": "ajogdand@dexciss.com",
    "property": "field_order",
    "property_type": "Data",
    "row_name": null,
-   "value": "[\"call_details_section\", \"id\", \"from\", \"to\", \"call_received_by\", \"custom_voip_user\", null, \"employee_user_id\", \"medium\", \"start_time\", \"end_time\", \"column_break_4\", \"type\", \"customer\", \"status\", \"duration\", \"recording_url\", \"recording_html\", \"section_break_11\", \"type_of_call\", \"summary\", \"section_break_19\", \"links\"]"
+   "value": "[\"call_details_section\", \"id\", \"from\", \"to\", \"call_received_by\", \"custom_voip_user\", \"custom_call_info\", \"employee_user_id\", \"medium\", \"start_time\", \"end_time\", \"column_break_4\", \"type\", \"customer\", \"status\", \"duration\", \"recording_url\", \"recording_html\", \"section_break_11\", \"type_of_call\", \"summary\", \"section_break_19\", \"links\"]"
   }
  ],
  "sync_on_migrate": 1
