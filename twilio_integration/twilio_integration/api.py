@@ -1,3 +1,4 @@
+import json
 from werkzeug.wrappers import Response
 
 import frappe
@@ -73,6 +74,7 @@ def twilio_incoming_call_handler(**kwargs):
 
 @frappe.whitelist()
 def create_call_log(call_details: TwilioCallDetails):
+	print("$$$$$$$$$$$$$$$$$$$$$$$$$",**call_details.to_dict())
 	call_log = frappe.get_doc({**call_details.to_dict(),
 		'doctype': 'Call Log',
 		'medium': 'Twilio'
@@ -143,3 +145,38 @@ def whatsapp_message_status_callback(**kwargs):
 	if frappe.db.exists({'doctype': 'WhatsApp Message', 'id': args.MessageSid, 'from_': args.From, 'to': args.To}):
 		message = frappe.get_doc('WhatsApp Message', {'id': args.MessageSid, 'from_': args.From, 'to': args.To})
 		message.db_set('status', args.MessageStatus.title())
+@frappe.whitelist()
+def set_call_details(call_sid,sell_type,values):
+	"""Update call log status.
+	"""
+	twilio = Twilio.connect()
+	if not (twilio and frappe.db.exists("Call Log", call_sid)): return
+	a=json.loads(values)
+	call_log = frappe.get_doc("Call Log", call_sid)
+	call_log.custom_ratings=a.get("call_ratings")
+	call_log.custom_request_call_review=a.get("request_call_review")
+	call_log.custom_reviewer=a.get("reviewer")
+	call_log.custom_sell_type=sell_type
+	call_log.custom_call_notes=a.get("call_notes")
+	call_log.flags.ignore_permissions = True
+	call_log.save()
+	frappe.db.commit()
+
+
+@frappe.whitelist()
+def create_event(values,sell_type):
+	values=json.loads(values)
+	if values.get("selling_step"):
+		doc=frappe.get_doc("Selling Step",sell_type)
+		if doc.create_event==1:
+			event=frappe.new_doc("Event")
+			event.starts_on=values.get("starts_on")
+			event.subject=values.get("subject")
+			event.event_category="Call"
+			event.event_type="Private"
+			event.description=values.get("descriptions")
+			event.flags.ignore_permissions = True
+			event.save()
+			frappe.db.commit()
+
+
