@@ -405,8 +405,8 @@ class OutgoingCallPopup extends TwilioCallPopup {
 					'label': 'Sell Type',
 					'fieldtype': 'Link',
 					'options': "Selling Step",
-					'ignore_validation': true,
 					"default":cur_frm.doc.custom_selling_step,
+					"reqd":1,
 					on_change: () => {
 						const sell_type = this.dialog.get_value('sell_type');
 						frappe.db.get_value("Selling Step", sell_type, "call_instructions", function(value) {
