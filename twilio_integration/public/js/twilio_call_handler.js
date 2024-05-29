@@ -1,3 +1,6 @@
+var con
+var call_start=0
+let def=""
 var onload_script = function() {
 	frappe.provide('frappe.phone_call');
 	frappe.provide('frappe.twilio_conn_dialog_map')
@@ -104,6 +107,7 @@ var onload_script = function() {
 	}
 
 	function update_call_log(conn, status="Completed") {
+		con=conn
 		if (!conn.parameters.CallSid) return
 		frappe.call({
 			"method": "twilio_integration.twilio_integration.api.update_call_log",
@@ -115,6 +119,7 @@ var onload_script = function() {
 	}
 
 	function call_screen(conn) {
+		con=conn
 		frappe.call({
 			type: "GET",
 			method: "twilio_integration.twilio_integration.api.get_contact_details",
@@ -127,8 +132,123 @@ var onload_script = function() {
 			}
 		});
 	}
+	
 }
 
+
+async function change_status_complete(sell_type)
+ {
+
+	let fields= [
+		{
+			"label": 'Call Rating',
+			"fieldname": "call_rating",
+			"fieldtype": "Rating",
+		},
+		{
+			"label": 'Request Call Review',
+			"fieldname": "request_call_review",
+			"fieldtype": "Check",
+		},
+		{
+			"fieldname": "cb1",
+			"fieldtype": "Column Break",
+		},
+		{
+			"label": 'Reviewer',
+			"fieldname": "reviewer",
+			"fieldtype": "Link",
+			"options":"User"
+		},
+		{
+			"fieldname": "cb2",
+			"fieldtype": "Column Break",
+		},
+		{
+			"label": 'Call Notes',
+			"fieldname": "call_notes",
+			"fieldtype": "Small Text",
+		}
+	]
+	await frappe.db.get_value("Selling Step",sell_type, "create_event", function(value) {
+		console.log("$$$$$$$$$$$$$$$",value.create_event)
+		if (value.create_event==1){
+			
+			fields.push({
+				"label": 'Events',
+				"fieldname": "Sb1",
+				"fieldtype": "Section Break",
+			},{
+				"label": 'NEXT STEP',
+				"fieldname": "selling_step",
+				"fieldtype": "Link",
+				"options":"Selling Step",
+				"reqd":1
+			},
+			{
+				"label": 'Starts On',
+				"fieldname": "starts_on",
+				"fieldtype": "Datetime",
+				"reqd":1
+				},
+				{
+					"label": 'Subject',
+					"fieldname": "subject",
+					"fieldtype": "Data",
+					"reqd":1
+				},
+				{
+					"fieldname": "cb3",
+					"fieldtype": "Column Break",
+				},
+				{
+					"label": 'Descriptions',
+					"fieldname": "descriptions",
+					"fieldtype": "Small Text",
+					"reqd":1
+				})
+	    }
+		console.log("$$$$$$$$$$$$$$$444555",fields)
+	
+   })
+   
+   console.log("outside before dialg",fields)
+    var d = new frappe.ui.Dialog({
+			static: 1,
+			fields: fields,
+			primary_action: function(values) {
+
+				d.hide();
+				if (!con.parameters.CallSid) return
+				frappe.call({
+					"method": "twilio_integration.twilio_integration.api.set_call_details",
+					"args": {
+						"call_sid": con.parameters.CallSid,
+						"sell_type":sell_type,
+						"values": values
+					}
+				})
+				frappe.call({
+					"method": "twilio_integration.twilio_integration.api.create_event",
+					"args": {
+						"values": values,
+						"sell_type":sell_type
+					}
+				})
+			
+				
+
+
+			},
+			primary_action_label: __('Submit')
+	    });
+	    d.get_close_btn().hide();
+		d.show();
+	    
+	 
+
+ };
+ 
 function get_status_indicator(status) {
 	const indicator_map = {
 		'available': 'blue',
@@ -192,6 +312,7 @@ class TwilioCallPopup {
 	}
 
 	setup_dialpad(conn) {
+		con=conn
 		let me = this;
 		this.dialpad = new DialPad({
 			twilio_device: this.twilio_device,
@@ -250,12 +371,20 @@ class TwilioCallPopup {
 }
 
 class OutgoingCallPopup extends TwilioCallPopup {
+	
 	constructor(twilio_device, phone_numbers) {
 		super(twilio_device);
 		this.phone_numbers = phone_numbers;
 	}
 
-	show() {
+	async show() {
+		if(cur_frm.doc.custom_selling_step){
+			await frappe.db.get_value("Selling Step", cur_frm.doc.custom_selling_step, "call_instructions", function(value) {
+			console.log(value)
+			def = value.call_instructions
+			})
+		}
+		
 		this.dialog = new frappe.ui.Dialog({
 			'static': 1,
 			'title': __('Make a Call'),
@@ -270,6 +399,29 @@ class OutgoingCallPopup extends TwilioCallPopup {
 					'default': this.phone_numbers[0],
 					'read_only': 0,
 					'reqd': 1
+				},
+				{
+					'fieldname': 'sell_type',
+					'label': 'Sell Type',
+					'fieldtype': 'Link',
+					'options': "Selling Step",
+					'ignore_validation': true,
+					"default":cur_frm.doc.custom_selling_step,
+					on_change: () => {
+						const sell_type = this.dialog.get_value('sell_type');
+						frappe.db.get_value("Selling Step", sell_type, "call_instructions", function(value) {
+							console.log(value)
+							this.dialog.set_value('instructions',value.call_instructions);
+							})
+
+					}
+				},
+				{
+					'fieldname': 'instructions',
+					'label': 'Instructions',
+					'fieldtype': 'Text Editor',
+					"read_only": 1,
+					"default":def
 				}
 			],
 			primary_action: () => {
@@ -285,12 +437,14 @@ class OutgoingCallPopup extends TwilioCallPopup {
 					frappe.twilio_conn_dialog_map[outgoingConnection] = this;
 					outgoingConnection.on("ringing", function () {
 						me.set_header('ringing');
+						call_start=1
 					});
 				} else {
 					this.dialog.enable_primary_action();
 				}
 			},
 			primary_action_label: __('Call'),
+			
 			secondary_action: () => {
 				if (this.twilio_device) {
 					this.twilio_device.disconnectAll();
@@ -316,6 +470,12 @@ class OutgoingCallPopup extends TwilioCallPopup {
 		this.dialog.get_secondary_btn().addClass('hide');
 		this.dialog.show();
 		this.dialog.get_close_btn().show();
+		this.dialog.get_close_btn().on('click', () => {
+		    if (call_start== 1){
+				console.log("$$$$$$$$$$$$$Calling")
+		   		change_status_complete(this.dialog.get_value('sell_type'))
+		    }
+		});
 	}
 }
 
