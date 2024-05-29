@@ -407,11 +407,13 @@ class OutgoingCallPopup extends TwilioCallPopup {
 					'options': "Selling Step",
 					"default":cur_frm.doc.custom_selling_step,
 					"reqd":1,
-					on_change: () => {
+					onchange: () => {
+						let z=this.dialog
 						const sell_type = this.dialog.get_value('sell_type');
+
 						frappe.db.get_value("Selling Step", sell_type, "call_instructions", function(value) {
 							console.log(value)
-							this.dialog.set_value('instructions',value.call_instructions);
+							z.set_value('instructions',value.call_instructions);
 							})
 
 					}
