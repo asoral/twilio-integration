@@ -74,7 +74,6 @@ def twilio_incoming_call_handler(**kwargs):
 
 @frappe.whitelist()
 def create_call_log(call_details: TwilioCallDetails):
-	print("$$$$$$$$$$$$$$$$$$$$$$$$$",**call_details.to_dict())
 	call_log = frappe.get_doc({**call_details.to_dict(),
 		'doctype': 'Call Log',
 		'medium': 'Twilio'
