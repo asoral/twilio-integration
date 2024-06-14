@@ -84,7 +84,7 @@ def create_call_log(call_details: TwilioCallDetails):
 	return call_log.name
 
 @frappe.whitelist()
-def update_call_log(call_sid, status=None):
+def update_call_log(call_sid,call_name=None,status=None):
 	"""Update call log status.
 	"""
 	twilio = Twilio.connect()
@@ -94,6 +94,8 @@ def update_call_log(call_sid, status=None):
 	call_log = frappe.get_doc("Call Log", call_sid)
 	call_log.status = status or TwilioCallDetails.get_call_status(call_details.status)
 	call_log.duration = call_details.duration
+	if call_name:
+		call_log.custom_call=call_name
 	call_log.custom_call_info=str(call_details.__dict__)
 	call_log.flags.ignore_permissions = True
 	call_log.save()
