@@ -124,6 +124,11 @@
   }
  ],
  "custom_perms": [
+
+ ],
+ "doctype": "Call Log",
+ "links": [],
+ "property_setters": [
   
  ],
  "sync_on_migrate": 1
