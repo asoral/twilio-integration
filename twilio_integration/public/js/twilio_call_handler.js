@@ -231,6 +231,7 @@ async function change_status_complete(sell_type)
 				frappe.call({
 					"method": "twilio_integration.twilio_integration.api.create_event",
 					"args": {
+						"call_sid": con.parameters.CallSid,
 						"values": values,
 						"sell_type":sell_type
 					}
