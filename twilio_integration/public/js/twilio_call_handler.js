@@ -208,7 +208,9 @@ async function change_status_complete(sell_type)
 					"reqd":1
 				})
 	    }
-		console.log("$$$$$$$$$$$$$$$444555",fields)
+		console.log("$$$$$$$$$$$$$$$444555dhjdghjdfhjdfhjfdhyyyyyyyyyyy",fields)
+		console.log("trigger cdhdhhdjhfdhjdf")
+		console.log("uuuuuuuuuuuuuuuuuuuuuuuuuuuu",con.parameters.CallSid)
 	
    })
    
@@ -231,7 +233,7 @@ async function change_status_complete(sell_type)
 				frappe.call({
 					"method": "twilio_integration.twilio_integration.api.create_event",
 					"args": {
-						"call_sid": con.parameters.CallSid,
+						"call_ref": con.parameters.CallSid,
 						"values": values,
 						"sell_type":sell_type
 					}
