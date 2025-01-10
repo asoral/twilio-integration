@@ -99,6 +99,15 @@ doctype_js = {
 # 		"on_trash": "method"
 #	}
 # }
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["name", "in", ["Event-custom_call_log"]]
+        ]
+    }
+]
+
 
 # Scheduled Tasks
 # ---------------

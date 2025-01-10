@@ -163,18 +163,19 @@ def set_call_details(call_sid,sell_type,values):
 
 
 @frappe.whitelist()
-def create_event(call_sid,values,sell_type):
+def create_event(call_ref,values,sell_type):
 	values=json.loads(values)
 	if values.get("selling_step"):
 		doc=frappe.get_doc("Selling Step",sell_type)
 		if doc.create_event==1:
-			call_log = frappe.get_doc("Call Log", call_sid)
+			call_log = frappe.get_doc("Call Log", call_ref)
 			event=frappe.new_doc("Event")
 			event.starts_on=values.get("starts_on")
 			event.subject=values.get("subject")
 			event.event_category="Call"
 			event.event_type="Private"
 			event.description=values.get("descriptions")
+			event.custom_call_log=call_ref
 			if call_log.links:
 				for link in call_log.links:
 					event.append("event_participants", {
@@ -184,7 +185,6 @@ def create_event(call_sid,values,sell_type):
 			event.flags.ignore_permissions = True
 			event.save()
 			frappe.db.commit()
-
 # @frappe.whitelist()
 # def fetch_contact(doc,method):
 # 	if doc.type=="Incoming":
