@@ -21,6 +21,23 @@ var onload_script = function() {
                     logLevel: 1 // optional: for more detailed logging
                 });
 
+                // --- Token Expiration Fix ---
+                device.on("tokenWillExpire", function() {
+                    console.log("Twilio token is about to expire, getting a new one...");
+                    frappe.call({
+                        method: "twilio_integration.twilio_integration.api.generate_access_token",
+                        callback: (data) => {
+                            if (data.message && data.message.token) {
+                                device.updateToken(data.message.token);
+                                console.log("Twilio token updated successfully.");
+                            } else {
+                                console.error("Failed to retrieve a new token.");
+                            }
+                        }
+                    });
+                });
+                // ------------------------------
+
                 device.on("registered", function (device) {
                     Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup){
                         popup.set_header('available');
