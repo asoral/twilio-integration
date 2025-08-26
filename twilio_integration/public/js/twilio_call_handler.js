@@ -607,4 +607,5 @@ class DialPad extends OutgoingCallPopup {
 var script = document.createElement('script');
 document.head.appendChild(script);
 script.onload = onload_script;
-script.src = "https://sdk.twilio.com/js/client/releases/1.13.0/twilio.min.js";
+// script.src = "https://sdk.twilio.com/js/client/releases/1.13.0/twilio.min.js";
+script.src = "https://sdk.twilio.com/js/voice-sdk/v2.0/twilio-voice.min.js"
