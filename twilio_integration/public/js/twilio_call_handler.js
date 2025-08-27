@@ -17,9 +17,11 @@ var onload_script = function() {
         frappe.call( {
             method: "twilio_integration.twilio_integration.api.generate_access_token",
             callback: (data) => {
+                // Change 1: Removed logLevel from constructor
                 device = new Twilio.Device(data.message.token, {
-                    logLevel: 1 // optional: for more detailed logging
+                    // You can add other options here if needed, like enableRingingState: true
                 });
+                
 
                 // --- Token Expiration Fix ---
                 device.on("tokenWillExpire", function() {
@@ -616,4 +618,5 @@ class DialPad extends OutgoingCallPopup {
 var script = document.createElement('script');
 document.head.appendChild(script);
 script.onload = onload_script;
-script.src = "https://sdk.twilio.com/js/voice-sdk/v2.0/twilio-voice.min.js"
+// Change 2: Updated the SDK URL
+script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js"
