@@ -1,150 +1,180 @@
 var con
 var call_start=0
 let def=""
+(function waitForTwilioSDK(maxRetries = 50) {
+    if (window.Twilio) {
+        console.log("[DEBUG] Twilio SDK detected. Initializing onload_script...");
+        onload_script();
+    } else if (maxRetries > 0) {
+        console.log(`[DEBUG] Twilio SDK not yet loaded. Retrying... (${maxRetries} left)`);
+        setTimeout(() => waitForTwilioSDK(maxRetries - 1), 300);
+    } else {
+        console.error("[ERROR] Twilio SDK failed to load after multiple attempts.");
+    }
+})();
+
+
 var onload_script = function() {
+    console.log("[DEBUG] Entered onload_script() function.");
+
     frappe.provide('frappe.phone_call');
-    frappe.provide('frappe.twilio_conn_dialog_map')
+    frappe.provide('frappe.twilio_conn_dialog_map');
+
+    console.log("[DEBUG] Checking frappe.boot.twilio_enabled:", frappe.boot.twilio_enabled);
+
     let device;
 
-    if (frappe.boot.twilio_enabled){
+    if (frappe.boot.twilio_enabled) {
+        console.log("[DEBUG] Twilio integration enabled. Starting setup...");
         frappe.run_serially([
-            () => setup_device(),
-            () => dialer_screen()
+            () => {
+                console.log("[DEBUG] Running setup_device()");
+                return setup_device();
+            },
+            () => {
+                console.log("[DEBUG] Running dialer_screen()");
+                return dialer_screen();
+            }
         ]);
+    } else {
+        console.warn("[DEBUG] Twilio integration is NOT enabled in frappe.boot!");
     }
 
     function setup_device() {
-        frappe.call( {
+        console.log("[DEBUG] Inside setup_device(), calling backend for Twilio token...");
+        frappe.call({
             method: "twilio_integration.twilio_integration.api.generate_access_token",
             callback: (data) => {
-                // Change 1: Removed logLevel from constructor
-                device = new Twilio.Device(data.message.token, {
-                    // You can add other options here if needed, like enableRingingState: true
-                });
-                
+                console.log("[DEBUG] Twilio token response:", data);
 
-                // --- Token Expiration Fix ---
+                if (!data.message || !data.message.token) {
+                    console.error("[ERROR] No token received from backend!");
+                    return;
+                }
+
+                try {
+                    console.log("[DEBUG] Initializing Twilio.Device...");
+                    device = new Twilio.Device(data.message.token, {});
+                    console.log("[DEBUG] Twilio.Device initialized successfully.");
+                } catch (err) {
+                    console.error("[ERROR] Failed to initialize Twilio.Device:", err);
+                    return;
+                }
+
+                // Listen for token expiration
                 device.on("tokenWillExpire", function() {
-                    console.log("Twilio token is about to expire, getting a new one...");
+                    console.log("[DEBUG] Token will expire soon. Fetching new token...");
                     frappe.call({
                         method: "twilio_integration.twilio_integration.api.generate_access_token",
                         callback: (data) => {
+                            console.log("[DEBUG] Token refresh response:", data);
                             if (data.message && data.message.token) {
                                 device.updateToken(data.message.token);
-                                console.log("Twilio token updated successfully.");
+                                console.log("[DEBUG] Twilio token updated successfully.");
                             } else {
-                                console.error("Failed to retrieve a new token.");
+                                console.error("[ERROR] Failed to refresh Twilio token.");
                             }
                         }
                     });
                 });
-                // ------------------------------
 
-                device.on("registered", function (device) {
-                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup){
+                device.on("registered", function() {
+                    console.log("[DEBUG] Twilio Device registered.");
+                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup) {
                         popup.set_header('available');
-                    })
+                    });
                 });
 
-                device.on("error", function (error) {
-                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup){
+                device.on("error", function(error) {
+                    console.error("[ERROR] Twilio Device Error:", error.message);
+                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup) {
                         popup.set_header('Failed');
-                    })
+                    });
                     device.disconnectAll();
-                    console.log("Twilio Device Error:" + error.message);
                 });
 
-                device.on("disconnect", function (conn) {
+                device.on("disconnect", function(conn) {
+                    console.log("[DEBUG] Call disconnected:", conn);
                     update_call_log(conn);
                     const popup = frappe.twilio_conn_dialog_map[conn];
-                    // Reomove the connection from map object
-                    delete frappe.twilio_conn_dialog_map[conn]
-                    popup.dialog.enable_primary_action();
-                    popup.show_close_button();
-                    window.onbeforeunload = null;
-                    popup.set_header("available");
-                    popup.hide_mute_button();
-                    popup.hide_hangup_button();
-                    popup.hide_dial_icon();
-                    popup.hide_dialpad();
-                    // Make sure that dialog is closed when incoming call is disconnected.
-                    if (conn.direction == 'INCOMING'){
-                        popup.close();
+                    delete frappe.twilio_conn_dialog_map[conn];
+                    if (popup) {
+                        console.log("[DEBUG] Updating UI after disconnect...");
+                        popup.dialog.enable_primary_action();
+                        popup.show_close_button();
+                        window.onbeforeunload = null;
+                        popup.set_header("available");
+                        popup.hide_mute_button();
+                        popup.hide_hangup_button();
+                        popup.hide_dial_icon();
+                        popup.hide_dialpad();
+                        if (conn.direction === 'INCOMING') {
+                            popup.close();
+                        }
                     }
                 });
 
-                device.on("connect", function (conn) {
+                device.on("connect", function(conn) {
+                    console.log("[DEBUG] Call connected:", conn);
                     const popup = frappe.twilio_conn_dialog_map[conn];
                     popup.setup_mute_button(conn);
-                    popup.dialog.set_secondary_action_label("Hang Up")
+                    popup.dialog.set_secondary_action_label("Hang Up");
                     popup.set_header("in-progress");
                     window.onbeforeunload = function() {
-                        return "you can not refresh the page";
-                    }
+                        return "You cannot refresh the page during a call.";
+                    };
                     popup.setup_dial_icon();
                     popup.setup_dialpad(conn);
-                    document.onkeydown = (e) => {
-                        if (popup.dialog.$wrapper.find('.dialpad-section').is(":hidden")) return;
-                        let key = e.key;
-                        if (conn.status() == 'open' && ["0","1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "w"].includes(key)) {
-                            conn.sendDigits(key);
-                            popup.update_dialpad_input(key);
-                        }
-                    };
                 });
 
-                device.on("incoming", function (conn) {
-                    console.log("Incoming connection from " + conn.parameters.From);
+                device.on("incoming", function(conn) {
+                    console.log("[DEBUG] Incoming call from:", conn.parameters.From);
                     call_screen(conn);
                 });
-
             }
         });
     }
 
     function dialer_screen() {
+        console.log("[DEBUG] Setting up dialer screen...");
         frappe.phone_call.handler = (to_number, frm) => {
-            let to_numbers;
-            let outgoing_call_popup;
-
-            if (Array.isArray(to_number)) {
-                to_numbers = to_number;
-            } else {
-                to_numbers = to_number.split('\n');
-            }
-            outgoing_call_popup = new OutgoingCallPopup(device, to_numbers);
+            console.log("[DEBUG] phone_call.handler triggered. to_number:", to_number);
+            let to_numbers = Array.isArray(to_number) ? to_number : to_number.split('\n');
+            console.log("[DEBUG] Final number list:", to_numbers);
+            let outgoing_call_popup = new OutgoingCallPopup(device, to_numbers);
             outgoing_call_popup.show();
-        }
+        };
     }
 
-    function update_call_log(conn, status="Completed") {
-        con=conn
-        if (!conn.parameters.CallSid) return
+    function update_call_log(conn, status = "Completed") {
+        console.log("[DEBUG] Updating call log. SID:", conn.parameters.CallSid, "Status:", status);
+        if (!conn.parameters.CallSid) return;
         frappe.call({
-            "method": "twilio_integration.twilio_integration.api.update_call_log",
-            "args": {
-                "call_sid": conn.parameters.CallSid,
-                "status": status
+            method: "twilio_integration.twilio_integration.api.update_call_log",
+            args: {
+                call_sid: conn.parameters.CallSid,
+                status: status
             }
-        })
+        });
     }
 
     function call_screen(conn) {
-        con=conn
+        console.log("[DEBUG] Preparing incoming call screen for:", conn.parameters.From);
         frappe.call({
             type: "GET",
             method: "twilio_integration.twilio_integration.api.get_contact_details",
             args: {
-                'phone': conn.parameters.From
+                phone: conn.parameters.From
             },
             callback: (data) => {
+                console.log("[DEBUG] Contact details response:", data);
                 let incoming_call_popup = new IncomingCallPopup(device, conn);
                 incoming_call_popup.show(data.message);
             }
         });
     }
-    
-}
+};
+
 
 
 async function change_status_complete(sell_type)
@@ -614,14 +644,6 @@ class DialPad extends OutgoingCallPopup {
         });
     }
 }
-
-(function waitForTwilioSDK() {
-    if (typeof Twilio !== "undefined") {
-        onload_script();
-    } else {
-        setTimeout(waitForTwilioSDK, 300);
-    }
-})();
 
 // var script = document.createElement('script');
 // document.head.appendChild(script);
