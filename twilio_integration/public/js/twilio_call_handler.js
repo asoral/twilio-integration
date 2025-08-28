@@ -615,8 +615,13 @@ class DialPad extends OutgoingCallPopup {
     }
 }
 
-onload_script();
-
+(function waitForTwilioSDK() {
+    if (typeof Twilio !== "undefined") {
+        onload_script();
+    } else {
+        setTimeout(waitForTwilioSDK, 300);
+    }
+})();
 
 // var script = document.createElement('script');
 // document.head.appendChild(script);
