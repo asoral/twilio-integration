@@ -615,8 +615,11 @@ class DialPad extends OutgoingCallPopup {
     }
 }
 
-var script = document.createElement('script');
-document.head.appendChild(script);
-script.onload = onload_script;
-// Change 2: Updated the SDK URL
-script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js"
+onload_script();
+
+
+// var script = document.createElement('script');
+// document.head.appendChild(script);
+// script.onload = onload_script;
+// // Change 2: Updated the SDK URL
+// script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js"
