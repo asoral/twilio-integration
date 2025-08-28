@@ -1,673 +1,692 @@
-var con;
+/* Twilio Voice SDK integration for Frappe (v2.2.0)
+ * - Loads SDK safely
+ * - Uses v2 Device + Call APIs
+ * - Preserves your dialogs/dialpad/notes workflow
+ */
+
+var con;                   // latest active Call (Twilio Call object)
 var call_start = 0;
 let def = "";
 
-// Load Twilio SDK safely and initialize after it's ready
+/* -----------------------------------------------------------
+   1) Load Twilio SDK v2.2.0 first, then initialize
+----------------------------------------------------------- */
 $(document).ready(() => {
-    console.log("[DEBUG] Desk ready. Injecting Twilio SDK...");
+  console.log("[Twilio] Desk ready. Injecting Twilio SDK v2.2.0...");
 
-    const script = document.createElement("script");
-    script.src = "https://sdk.twilio.com/js/voice-sdk/v2.2.0/twilio-voice.min.js";
-    script.type = "text/javascript";
-    script.async = true;
+  const script = document.createElement("script");
+  script.src = "https://sdk.twilio.com/js/voice-sdk/v2.2.0/twilio-voice.min.js";
+  script.type = "text/javascript";
+  script.async = true;
 
-    script.onload = () => {
-        console.log("[DEBUG] Twilio SDK loaded successfully. Initializing...");
-        if (typeof Twilio !== "undefined") {
-            try {
-                onload_script();
-                console.log("[DEBUG] onload_script executed successfully");
-            } catch (err) {
-                console.error("[ERROR] onload_script execution failed:", err);
-            }
-        } else {
-            console.error("[ERROR] Twilio is still undefined after loading SDK");
-        }
-    };
+  script.onload = () => {
+    console.log("[Twilio] SDK loaded. Initializing...");
+    // Support both globals: Device (v2 UMD) and Twilio.Device (older expectation)
+    const DeviceCtor = window.Device || (window.Twilio && window.Twilio.Device);
+    if (!DeviceCtor) {
+      console.error("[Twilio] Neither global Device nor Twilio.Device is available.");
+      return;
+    }
+    try {
+      onload_script(DeviceCtor);
+    } catch (err) {
+      console.error("[Twilio] onload_script failed:", err);
+    }
+  };
 
-    script.onerror = () => {
-        console.error("[ERROR] Failed to load Twilio SDK from CDN.");
-    };
+  script.onerror = () => {
+    console.error("[Twilio] Failed to load Voice SDK from CDN.");
+  };
 
-    document.head.appendChild(script);
+  document.head.appendChild(script);
 });
 
+/* -----------------------------------------------------------
+   2) Globals & helpers used across handlers
+----------------------------------------------------------- */
 
-
-
-var onload_script = function() {
-    console.log("[DEBUG] Entered onload_script() function.");
-
-    frappe.provide('frappe.phone_call');
-    frappe.provide('frappe.twilio_conn_dialog_map');
-
-    console.log("[DEBUG] Checking frappe.boot.twilio_enabled:", frappe.boot.twilio_enabled);
-
-    let device;
-
-    if (frappe.boot.twilio_enabled) {
-        console.log("[DEBUG] Twilio integration enabled. Starting setup...");
-        frappe.run_serially([
-            () => {
-                console.log("[DEBUG] Running setup_device()");
-                return setup_device();
-            },
-            () => {
-                console.log("[DEBUG] Running dialer_screen()");
-                return dialer_screen();
-            }
-        ]);
-    } else {
-        console.warn("[DEBUG] Twilio integration is NOT enabled in frappe.boot!");
-    }
-
-    function setup_device() {
-        console.log("[DEBUG] Inside setup_device(), calling backend for Twilio token...");
-        frappe.call({
-            method: "twilio_integration.twilio_integration.api.generate_access_token",
-            callback: (data) => {
-                console.log("[DEBUG] Twilio token response:", data);
-
-                if (!data.message || !data.message.token) {
-                    console.error("[ERROR] No token received from backend!");
-                    return;
-                }
-
-                try {
-                    console.log("[DEBUG] Initializing Twilio.Device...");
-                    device = new Twilio.Device(data.message.token, {});
-                    console.log("[DEBUG] Twilio.Device initialized successfully.");
-                } catch (err) {
-                    console.error("[ERROR] Failed to initialize Twilio.Device:", err);
-                    return;
-                }
-
-                // Listen for token expiration
-                device.on("tokenWillExpire", function() {
-                    console.log("[DEBUG] Token will expire soon. Fetching new token...");
-                    frappe.call({
-                        method: "twilio_integration.twilio_integration.api.generate_access_token",
-                        callback: (data) => {
-                            console.log("[DEBUG] Token refresh response:", data);
-                            if (data.message && data.message.token) {
-                                device.updateToken(data.message.token);
-                                console.log("[DEBUG] Twilio token updated successfully.");
-                            } else {
-                                console.error("[ERROR] Failed to refresh Twilio token.");
-                            }
-                        }
-                    });
-                });
-
-                device.on("registered", function() {
-                    console.log("[DEBUG] Twilio Device registered.");
-                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup) {
-                        popup.set_header('available');
-                    });
-                });
-
-                device.on("error", function(error) {
-                    console.error("[ERROR] Twilio Device Error:", error.message);
-                    Object.values(frappe.twilio_conn_dialog_map).forEach(function(popup) {
-                        popup.set_header('Failed');
-                    });
-                    device.disconnectAll();
-                });
-
-                device.on("disconnect", function(conn) {
-                    console.log("[DEBUG] Call disconnected:", conn);
-                    update_call_log(conn);
-                    const popup = frappe.twilio_conn_dialog_map[conn];
-                    delete frappe.twilio_conn_dialog_map[conn];
-                    if (popup) {
-                        console.log("[DEBUG] Updating UI after disconnect...");
-                        popup.dialog.enable_primary_action();
-                        popup.show_close_button();
-                        window.onbeforeunload = null;
-                        popup.set_header("available");
-                        popup.hide_mute_button();
-                        popup.hide_hangup_button();
-                        popup.hide_dial_icon();
-                        popup.hide_dialpad();
-                        if (conn.direction === 'INCOMING') {
-                            popup.close();
-                        }
-                    }
-                });
-
-                device.on("connect", function(conn) {
-                    console.log("[DEBUG] Call connected:", conn);
-                    const popup = frappe.twilio_conn_dialog_map[conn];
-                    popup.setup_mute_button(conn);
-                    popup.dialog.set_secondary_action_label("Hang Up");
-                    popup.set_header("in-progress");
-                    window.onbeforeunload = function() {
-                        return "You cannot refresh the page during a call.";
-                    };
-                    popup.setup_dial_icon();
-                    popup.setup_dialpad(conn);
-                });
-
-                device.on("incoming", function(conn) {
-                    console.log("[DEBUG] Incoming call from:", conn.parameters.From);
-                    call_screen(conn);
-                });
-            }
-        });
-    }
-
-    function dialer_screen() {
-        console.log("[DEBUG] Setting up dialer screen...");
-        frappe.phone_call.handler = (to_number, frm) => {
-            console.log("[DEBUG] phone_call.handler triggered. to_number:", to_number);
-            let to_numbers = Array.isArray(to_number) ? to_number : to_number.split('\n');
-            console.log("[DEBUG] Final number list:", to_numbers);
-            let outgoing_call_popup = new OutgoingCallPopup(device, to_numbers);
-            outgoing_call_popup.show();
-        };
-    }
-
-    function update_call_log(conn, status = "Completed") {
-        console.log("[DEBUG] Updating call log. SID:", conn.parameters.CallSid, "Status:", status);
-        if (!conn.parameters.CallSid) return;
-        frappe.call({
-            method: "twilio_integration.twilio_integration.api.update_call_log",
-            args: {
-                call_sid: conn.parameters.CallSid,
-                status: status
-            }
-        });
-    }
-
-    function call_screen(conn) {
-        console.log("[DEBUG] Preparing incoming call screen for:", conn.parameters.From);
-        frappe.call({
-            type: "GET",
-            method: "twilio_integration.twilio_integration.api.get_contact_details",
-            args: {
-                phone: conn.parameters.From
-            },
-            callback: (data) => {
-                console.log("[DEBUG] Contact details response:", data);
-                let incoming_call_popup = new IncomingCallPopup(device, conn);
-                incoming_call_popup.show(data.message);
-            }
-        });
-    }
-};
-
-
-
-async function change_status_complete(sell_type)
- {
-
-    let fields= [
-        {
-            "label": 'Call Rating',
-            "fieldname": "call_rating",
-            "fieldtype": "Rating",
-        },
-        {
-            "label": 'Request Call Review',
-            "fieldname": "request_call_review",
-            "fieldtype": "Check",
-        },
-        {
-            "fieldname": "cb1",
-            "fieldtype": "Column Break",
-        },
-        {
-            "label": 'Reviewer',
-            "fieldname": "reviewer",
-            "fieldtype": "Link",
-            "options":"User"
-        },
-        {
-            "fieldname": "cb2",
-            "fieldtype": "Column Break",
-        },
-        {
-            "label": 'Call Notes',
-            "fieldname": "call_notes",
-            "fieldtype": "Small Text",
-        }
-    ]
-    await frappe.db.get_value("Selling Step",sell_type, "create_event", function(value) {
-        console.log("$$$$$$$$$$$$$$$",value.create_event)
-        if (value.create_event==1){
-            
-            fields.push({
-                "label": 'Events',
-                "fieldname": "Sb1",
-                "fieldtype": "Section Break",
-            },{
-                "label": 'NEXT STEP',
-                "fieldname": "selling_step",
-                "fieldtype": "Link",
-                "options":"Selling Step",
-                "reqd":1
-            },
-            {
-                "label": 'Starts On',
-                "fieldname": "starts_on",
-                "fieldtype": "Datetime",
-                "reqd":1
-                },
-                {
-                    "label": 'Subject',
-                    "fieldname": "subject",
-                    "fieldtype": "Data",
-                    "reqd":1
-                },
-                {
-                    "fieldname": "cb3",
-                    "fieldtype": "Column Break",
-                },
-                {
-                    "label": 'Descriptions',
-                    "fieldname": "descriptions",
-                    "fieldtype": "Small Text",
-                    "reqd":1
-                })
-        }
-        console.log("$$$$$$$$$$$$$$$444555dhjdghjdfhjdfhjfdhyyyyyyyyyyy",fields)
-        console.log("trigger cdhdhhdjhfdhjdf")
-        console.log("uuuuuuuuuuuuuuuuuuuuuuuuuuuu",con.parameters.CallSid)
-    
-   })
-   
-   console.log("outside before dialg",fields)
-    var d = new frappe.ui.Dialog({
-            static: 1,
-            fields: fields,
-            primary_action: function(values) {
-
-                d.hide();
-                if (!con.parameters.CallSid) return
-                frappe.call({
-                    "method": "twilio_integration.twilio_integration.api.set_call_details",
-                    "args": {
-                        "call_sid": con.parameters.CallSid,
-                        "sell_type":sell_type,
-                        "values": values
-                    }
-                })
-                frappe.call({
-                    "method": "twilio_integration.twilio_integration.api.create_event",
-                    "args": {
-                        "call_ref": con.parameters.CallSid,
-                        "values": values,
-                        "sell_type":sell_type
-                    }
-                })
-            
-                
-
-
-            },
-            primary_action_label: __('Submit')
-        });
-        d.get_close_btn().hide();
-        d.show();
-        
-     
-
- };
- 
-function get_status_indicator(status) {
-    const indicator_map = {
-        'available': 'blue',
-        'completed': 'blue',
-        'failed': 'red',
-        'busy': 'yellow',
-        'no-answer': 'orange',
-        'queued': 'orange',
-        'ringing': 'green blink',
-        'in-progress': 'green blink'
-    };
-    const indicator_class = `indicator ${indicator_map[status] || 'blue blink'}`;
-    return indicator_class;
+// Robust map Call <-> Popup (avoid using objects as keys)
+const _popupByCallId = Object.create(null);
+function _idForCall(call) {
+  if (!call.__popupId) call.__popupId = "call_" + Math.random().toString(36).slice(2);
+  return call.__popupId;
+}
+function linkPopup(call, popup) {
+  _popupByCallId[_idForCall(call)] = popup;
+}
+function getPopup(call) {
+  return _popupByCallId[_idForCall(call)];
+}
+function unlinkPopup(call) {
+  delete _popupByCallId[_idForCall(call)];
 }
 
-class TwilioCallPopup {
+/* -----------------------------------------------------------
+   3) Main init
+----------------------------------------------------------- */
+var onload_script = function (DeviceCtor) {
+  console.log("[Twilio] Entered onload_script()");
+
+  frappe.provide("frappe.phone_call");
+  frappe.provide("frappe.twilio_conn_dialog_map"); // kept for legacy compatibility (iterated on 'registered')
+
+  let device;
+
+  if (!frappe.boot || !frappe.boot.twilio_enabled) {
+    console.warn("[Twilio] frappe.boot.twilio_enabled is falsey; skipping init.");
+    return;
+  }
+
+  frappe.run_serially([
+    () => setup_device(),
+    () => dialer_screen()
+  ]);
+
+  /* -------------------- Device setup -------------------- */
+  function setup_device() {
+    console.log("[Twilio] Getting access token...");
+    frappe.call({
+      method: "twilio_integration.twilio_integration.api.generate_access_token",
+      callback: (data) => {
+        if (!data.message || !data.message.token) {
+          console.error("[Twilio] No token returned from server.");
+          return;
+        }
+
+        try {
+          // Create Device (v2)
+          device = new DeviceCtor(data.message.token, {
+            // You can add options here (e.g., codecPreferences)
+            // logLevel: "error",
+          });
+          console.log("[Twilio] Device created.");
+        } catch (e) {
+          console.error("[Twilio] Device constructor failed:", e);
+          return;
+        }
+
+        // Register for incoming, presence, etc.
+        // (In v2, Device does not open signaling channel until register() or connect())
+        try {
+          device.register();
+          console.log("[Twilio] Device.register() called.");
+        } catch (e) {
+          console.error("[Twilio] Device.register() failed:", e);
+        }
+
+        // ---- Token auto-refresh ----
+        device.on("tokenWillExpire", () => {
+          console.log("[Twilio] Token expiring; refreshing...");
+          frappe.call({
+            method: "twilio_integration.twilio_integration.api.generate_access_token",
+            callback: (res) => {
+              if (res.message && res.message.token) {
+                try {
+                  device.updateToken(res.message.token);
+                  console.log("[Twilio] Token updated.");
+                } catch (e) {
+                  console.error("[Twilio] updateToken failed:", e);
+                }
+              } else {
+                console.error("[Twilio] Token refresh endpoint did not return a token.");
+              }
+            }
+          });
+        });
+
+        // ---- Device lifecycle/events ----
+        device.on("registered", () => {
+          console.log("[Twilio] Device registered.");
+          // Keep compatibility with your earlier loop:
+          Object.values(_popupByCallId).forEach((popup) => {
+            popup?.set_header?.("available");
+          });
+        });
+
+        device.on("unregistered", () => {
+          console.warn("[Twilio] Device unregistered.");
+        });
+
+        device.on("error", (error) => {
+          console.error("[Twilio] Device error:", error);
+          Object.values(_popupByCallId).forEach((popup) => popup?.set_header?.("Failed"));
+          try {
+            device.disconnectAll();
+          } catch (_) { /* ignore */ }
+        });
+
+        device.on("incoming", (call) => {
+          // mark as incoming for UI logic on disconnect
+          call.__incoming = true;
+          console.log("[Twilio] Incoming call from:", call.parameters && call.parameters.From);
+          call_screen(call);
+        });
+      }
+    });
+  }
+
+  /* -------------------- Dialer (outgoing) -------------------- */
+  function dialer_screen() {
+    frappe.phone_call.handler = (to_number /* string | string[] */, frm) => {
+      let to_numbers = Array.isArray(to_number) ? to_number : String(to_number || "").split("\n");
+      const popup = new OutgoingCallPopup(device, to_numbers);
+      popup.show();
+    };
+  }
+
+  /* -------------------- Call Log update -------------------- */
+  function update_call_log(call, status = "Completed") {
+    con = call;
+    const sid = call?.parameters?.CallSid; // Client leg SID
+    if (!sid) return;
+    frappe.call({
+      method: "twilio_integration.twilio_integration.api.update_call_log",
+      args: { call_sid: sid, status }
+    });
+  }
+
+  /* -------------------- Incoming Call Screen -------------------- */
+  function call_screen(call) {
+    con = call;
+    const from = (call.parameters && call.parameters.From) || "";
+    frappe.call({
+      type: "GET",
+      method: "twilio_integration.twilio_integration.api.get_contact_details",
+      args: { phone: from },
+      callback: (data) => {
+        const incoming_popup = new IncomingCallPopup(device, call);
+        incoming_popup.show(data.message);
+        wire_call_events(call, incoming_popup);
+      }
+    });
+  }
+
+  /* -------------------- Call -> UI wiring (shared) -------------------- */
+  function wire_call_events(call, popup) {
+    linkPopup(call, popup);
+
+    // Ringing state
+    call.on("ringing", () => {
+      popup.set_header("ringing");
+      call_start = 1;
+    });
+
+    // When call is accepted (i.e., media connected)
+    call.on("accept", () => {
+      popup.setup_mute_button(call);
+      popup.dialog.set_secondary_action_label("Hang Up");
+      popup.set_header("in-progress");
+
+      window.onbeforeunload = function () {
+        return "You cannot refresh the page during a call.";
+      };
+
+      popup.setup_dial_icon();
+      popup.setup_dialpad(call);
+
+      // Keyboard DTMF (only if dialpad visible)
+      document.onkeydown = (e) => {
+        if (popup.dialog.$wrapper.find(".dialpad-section").is(":hidden")) return;
+        const key = e.key;
+        if (["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "w"].includes(key)) {
+          try {
+            call.sendDigits(key);
+            popup.update_dialpad_input(key);
+          } catch (_) { /* ignore */ }
+        }
+      };
+    });
+
+    // Disconnect cleanup
+    call.on("disconnect", () => {
+      update_call_log(call);
+
+      const p = getPopup(call);
+      unlinkPopup(call);
+
+      if (p) {
+        p.dialog.enable_primary_action?.();
+        p.show_close_button?.();
+        window.onbeforeunload = null;
+        p.set_header?.("available");
+        p.hide_mute_button?.();
+        p.hide_hangup_button?.();
+        p.hide_dial_icon?.();
+        p.hide_dialpad?.();
+        if (call.__incoming) {
+          p.close?.();
+        }
+      }
+    });
+
+    call.on("error", (err) => {
+      console.error("[Twilio] Call error:", err);
+      const p = getPopup(call);
+      p?.set_header?.("Failed");
+    });
+  }
+
+  /* ===========================================================
+     UI helpers & classes
+  =========================================================== */
+
+  async function change_status_complete(sell_type) {
+    let fields = [
+      { label: "Call Rating", fieldname: "call_rating", fieldtype: "Rating" },
+      { label: "Request Call Review", fieldname: "request_call_review", fieldtype: "Check" },
+      { fieldname: "cb1", fieldtype: "Column Break" },
+      { label: "Reviewer", fieldname: "reviewer", fieldtype: "Link", options: "User" },
+      { fieldname: "cb2", fieldtype: "Column Break" },
+      { label: "Call Notes", fieldname: "call_notes", fieldtype: "Small Text" }
+    ];
+
+    await frappe.db.get_value("Selling Step", sell_type, "create_event", function (value) {
+      if (value.create_event == 1) {
+        fields.push(
+          { label: "Events", fieldname: "Sb1", fieldtype: "Section Break" },
+          { label: "NEXT STEP", fieldname: "selling_step", fieldtype: "Link", options: "Selling Step", reqd: 1 },
+          { label: "Starts On", fieldname: "starts_on", fieldtype: "Datetime", reqd: 1 },
+          { label: "Subject", fieldname: "subject", fieldtype: "Data", reqd: 1 },
+          { fieldname: "cb3", fieldtype: "Column Break" },
+          { label: "Descriptions", fieldname: "descriptions", fieldtype: "Small Text", reqd: 1 }
+        );
+      }
+    });
+
+    var d = new frappe.ui.Dialog({
+      static: 1,
+      fields: fields,
+      primary_action_label: __("Submit"),
+      primary_action: function (values) {
+        d.hide();
+        const sid = con?.parameters?.CallSid;
+        if (!sid) return;
+
+        frappe.call({
+          method: "twilio_integration.twilio_integration.api.set_call_details",
+          args: { call_sid: sid, sell_type: sell_type, values: values }
+        });
+
+        frappe.call({
+          method: "twilio_integration.twilio_integration.api.create_event",
+          args: { call_ref: sid, values: values, sell_type: sell_type }
+        });
+      }
+    });
+
+    d.get_close_btn().hide();
+    d.show();
+  }
+
+  function get_status_indicator(status) {
+    const indicator_map = {
+      available: "blue",
+      completed: "blue",
+      failed: "red",
+      busy: "yellow",
+      "no-answer": "orange",
+      queued: "orange",
+      ringing: "green blink",
+      "in-progress": "green blink"
+    };
+    return `indicator ${indicator_map[status] || "blue blink"}`;
+  }
+
+  class TwilioCallPopup {
     constructor(twilio_device) {
-        this.twilio_device = twilio_device;
+      this.twilio_device = twilio_device;
+      this.dialog = null;
+      this.dialpad = null;
     }
 
     hide_hangup_button() {
-        this.dialog.get_secondary_btn().addClass('hide');
+      this.dialog.get_secondary_btn().addClass("hide");
     }
 
     set_header(status) {
-        if (!this.dialog){
-            return;
-        }
-        this.dialog.set_title(frappe.model.unscrub(status));
-        const indicator_class = get_status_indicator(status);
-        this.dialog.header.find('.indicator').attr('class', `indicator ${indicator_class}`);
+      if (!this.dialog) return;
+      this.dialog.set_title(frappe.model.unscrub(status));
+      const indicator_class = get_status_indicator(status);
+      this.dialog.header.find(".indicator").attr("class", `indicator ${indicator_class}`);
     }
 
-    setup_mute_button(twilio_conn) {
-        let me = this;
-        let mute_button = me.dialog.custom_actions.find('.btn-mute');
-        mute_button.removeClass('hide');
-        mute_button.on('click', function (event) {
-            if ($(this).text().trim() == 'Mute') {
-                twilio_conn.mute(true);
-                $(this).html('Unmute');
-            }
-            else {
-                twilio_conn.mute(false);
-                $(this).html('Mute');
-            }
-        });
+    setup_mute_button(twilio_call) {
+      let me = this;
+      let mute_button = me.dialog.custom_actions.find(".btn-mute");
+      mute_button.removeClass("hide");
+      mute_button.off("click").on("click", function () {
+        const isMute = $(this).text().trim() === "Mute";
+        try {
+          twilio_call.mute(isMute);
+          $(this).html(isMute ? "Unmute" : "Mute");
+        } catch (_) { /* ignore */ }
+      });
     }
 
     hide_mute_button() {
-        let mute_button = this.dialog.custom_actions.find('.btn-mute');
-        mute_button.addClass('hide');
+      this.dialog.custom_actions.find(".btn-mute").addClass("hide");
     }
 
     show_close_button() {
-        this.dialog.get_close_btn().show();
+      this.dialog.get_close_btn().show();
     }
 
     close() {
-        this.dialog.cancel();
+      this.dialog.cancel();
     }
 
-    setup_dialpad(conn) {
-        con=conn
-        let me = this;
-        this.dialpad = new DialPad({
-            twilio_device: this.twilio_device,
-            wrapper: me.dialog.$wrapper.find('.dialpad-section'),
-            events: {
-                dialpad_event: function($btn) {
-                    const button_value = $btn.attr('data-button-value');
-                    conn.sendDigits(button_value);
-                    me.update_dialpad_input(button_value);
-                }
-            },
-            cols: 5,
-            keys: [
-                [ 1, 2, 3 ],
-                [ 4, 5, 6 ],
-                [ 7, 8, 9 ],
-                [ '*', 0, '#' ]
-            ]
-        })
+    setup_dialpad(call) {
+      con = call;
+      let me = this;
+      this.dialpad = new DialPad({
+        twilio_device: this.twilio_device,
+        wrapper: me.dialog.$wrapper.find(".dialpad-section"),
+        events: {
+          dialpad_event: function ($btn) {
+            const button_value = $btn.attr("data-button-value");
+            try {
+              call.sendDigits(button_value);
+              me.update_dialpad_input(button_value);
+            } catch (_) { /* ignore */ }
+          }
+        },
+        cols: 5,
+        keys: [
+          [1, 2, 3],
+          [4, 5, 6],
+          [7, 8, 9],
+          ["*", 0, "#"]
+        ]
+      });
     }
 
     update_dialpad_input(key) {
-        let dialpad_input = this.dialog.$wrapper.find('.dialpad-input')[0];
-        dialpad_input.value += key;
+      let el = this.dialog.$wrapper.find(".dialpad-input")[0];
+      if (el) el.value += key;
     }
 
     setup_dial_icon() {
-        let me = this;
-        let dialpad_icon = this.dialog.$wrapper.find('.dialpad-icon');
-        dialpad_icon.removeClass('hide');
-        dialpad_icon.on('click', function (event) {
-            let dialpad_section = me.dialog.$wrapper.find('.dialpad-section');
-            if(dialpad_section.hasClass('hide')) {
-                me.show_dialpad();
-            }
-            else {
-                me.hide_dialpad();
-            }
-        });
+      let me = this;
+      let dialpad_icon = this.dialog.$wrapper.find(".dialpad-icon");
+      dialpad_icon.removeClass("hide");
+      dialpad_icon.off("click").on("click", function () {
+        let dialpad_section = me.dialog.$wrapper.find(".dialpad-section");
+        if (dialpad_section.hasClass("hide")) me.show_dialpad();
+        else me.hide_dialpad();
+      });
     }
 
     hide_dial_icon() {
-        let dial_icon = this.dialog.$wrapper.find('.dialpad-icon');
-        dial_icon.addClass('hide');
+      this.dialog.$wrapper.find(".dialpad-icon").addClass("hide");
     }
 
     show_dialpad() {
-        let dialpad_section = this.dialog.$wrapper.find('.dialpad-section');
-        dialpad_section.removeClass('hide');
+      this.dialog.$wrapper.find(".dialpad-section").removeClass("hide");
     }
 
     hide_dialpad() {
-        let dialpad_section = this.dialog.$wrapper.find('.dialpad-section');
-        dialpad_section.addClass('hide');
+      this.dialog.$wrapper.find(".dialpad-section").addClass("hide");
     }
-}
+  }
 
-class OutgoingCallPopup extends TwilioCallPopup {
-    
+  class OutgoingCallPopup extends TwilioCallPopup {
     constructor(twilio_device, phone_numbers) {
-        super(twilio_device);
-        this.phone_numbers = phone_numbers;
+      super(twilio_device);
+      this.phone_numbers = phone_numbers || [];
     }
 
     async show() {
-        if(cur_frm.doc.custom_selling_step){
-            await frappe.db.get_value("Selling Step", cur_frm.doc.custom_selling_step, "call_instructions", function(value) {
-            console.log(value)
-            def = value.call_instructions
-            })
+      if (window.cur_frm && cur_frm.doc && cur_frm.doc.custom_selling_step) {
+        await frappe.db.get_value(
+          "Selling Step",
+          cur_frm.doc.custom_selling_step,
+          "call_instructions",
+          function (value) {
+            def = value.call_instructions;
+          }
+        );
+      }
+
+      this.dialog = new frappe.ui.Dialog({
+        static: 1,
+        title: __("Make a Call"),
+        minimizable: true,
+        fields: [
+          {
+            fieldname: "to_number",
+            label: "To Number",
+            fieldtype: "Data",
+            ignore_validation: true,
+            options: this.phone_numbers,
+            default: this.phone_numbers[0] || "",
+            read_only: 0,
+            reqd: 1
+          },
+          {
+            fieldname: "sell_type",
+            label: "Sell Type",
+            fieldtype: "Link",
+            options: "Selling Step",
+            default: (cur_frm && cur_frm.doc && cur_frm.doc.custom_selling_step) || "",
+            reqd: 1,
+            onchange: () => {
+              const sell_type = this.dialog.get_value("sell_type");
+              const z = this.dialog;
+              frappe.db.get_value("Selling Step", sell_type, "call_instructions", function (value) {
+                z.set_value("instructions", value.call_instructions);
+              });
+            }
+          },
+          {
+            fieldname: "instructions",
+            label: "Instructions",
+            fieldtype: "Text Editor",
+            read_only: 1,
+            default: def || ""
+          }
+        ],
+        primary_action_label: __("Call"),
+        primary_action: () => {
+          this.dialog.disable_primary_action();
+
+          const to = this.dialog.get_value("to_number");
+          if (!to) {
+            this.dialog.enable_primary_action();
+            return;
+          }
+
+          if (!this.twilio_device) {
+            console.error("[Twilio] Device not ready.");
+            this.dialog.enable_primary_action();
+            return;
+          }
+
+          try {
+            // v2 connect signature
+            const call = this.twilio_device.connect({ params: { To: to } });
+            call.__incoming = false;
+            linkPopup(call, this);
+            wire_call_events(call, this);
+          } catch (e) {
+            console.error("[Twilio] device.connect failed:", e);
+            this.dialog.enable_primary_action();
+          }
+        },
+        secondary_action_label: __("Hang Up"),
+        secondary_action: () => {
+          try {
+            this.twilio_device && this.twilio_device.disconnectAll();
+          } catch (_) { /* ignore */ }
+        },
+        onhide: () => {
+          try {
+            this.twilio_device && this.twilio_device.disconnectAll();
+          } catch (_) { /* ignore */ }
         }
-        
-        this.dialog = new frappe.ui.Dialog({
-            'static': 1,
-            'title': __('Make a Call'),
-            'minimizable': true,
-            'fields': [
-                {
-                    'fieldname': 'to_number',
-                    'label': 'To Number',
-                    'fieldtype': 'Data',
-                    'ignore_validation': true,
-                    'options': this.phone_numbers,
-                    'default': this.phone_numbers[0],
-                    'read_only': 0,
-                    'reqd': 1
-                },
-                {
-                    'fieldname': 'sell_type',
-                    'label': 'Sell Type',
-                    'fieldtype': 'Link',
-                    'options': "Selling Step",
-                    "default":cur_frm.doc.custom_selling_step,
-                    "reqd":1,
-                    onchange: () => {
-                        let z=this.dialog
-                        const sell_type = this.dialog.get_value('sell_type');
+      });
 
-                        frappe.db.get_value("Selling Step", sell_type, "call_instructions", function(value) {
-                            console.log(value)
-                            z.set_value('instructions',value.call_instructions);
-                            })
+      let to_number = this.dialog.$wrapper
+        .find('[data-fieldname="to_number"]')
+        .find('[type="text"]');
 
-                    }
-                },
-                {
-                    'fieldname': 'instructions',
-                    'label': 'Instructions',
-                    'fieldtype': 'Text Editor',
-                    "read_only": 1,
-                    "default":def
-                }
-            ],
-            primary_action: () => {
-                this.dialog.disable_primary_action();
+      $(
+        `<span class="dialpad-icon hide">
+          <a class="btn-open no-decoration" title="${__("Dialpad")}">
+            ${frappe.utils.icon("dialpad")}
+          </a>
+        </span>`
+      ).insertAfter(to_number);
 
-                var params = {
-                    To: this.dialog.get_value('to_number')
-                };
+      $(`<div class="dialpad-section hide"></div>`).insertAfter(
+        this.dialog.$wrapper.find(".modal-content")
+      );
 
-                if (this.twilio_device) {
-                    let me = this;
-                    let outgoingConnection = this.twilio_device.connect(params);
-                    frappe.twilio_conn_dialog_map[outgoingConnection] = this;
-                    outgoingConnection.on("ringing", function () {
-                        me.set_header('ringing');
-                        call_start=1
-                    });
-                } else {
-                    this.dialog.enable_primary_action();
-                }
-            },
-            primary_action_label: __('Call'),
-            
-            secondary_action: () => {
-                if (this.twilio_device) {
-                    this.twilio_device.disconnectAll();
-                }
-            },
-            onhide: () => {
-                if (this.twilio_device) {
-                    this.twilio_device.disconnectAll();
-                }
-            }
-        });
-        let to_number = this.dialog.$wrapper.find('[data-fieldname="to_number"]').find('[type="text"]');
+      this.dialog.add_custom_action("Mute", null, "btn-mute mr-2 hide");
+      this.dialog.get_secondary_btn().addClass("hide");
+      this.dialog.show();
+      this.dialog.get_close_btn().show();
 
-        $(`<span class="dialpad-icon hide">
-            <a class="btn-open no-decoration" title="${__('Dialpad')}">
-                ${frappe.utils.icon('dialpad')}
-        </span>`).insertAfter(to_number);
-
-        $(`<div class="dialpad-section hide"></div>`)
-        .insertAfter(this.dialog.$wrapper.find('.modal-content'));
-
-        this.dialog.add_custom_action('Mute', null, 'btn-mute mr-2 hide');
-        this.dialog.get_secondary_btn().addClass('hide');
-        this.dialog.show();
-        this.dialog.get_close_btn().show();
-        this.dialog.get_close_btn().on('click', () => {
-            if (call_start== 1){
-                console.log("$$$$$$$$$$$$$Calling")
-                change_status_complete(this.dialog.get_value('sell_type'))
-            }
-        });
+      this.dialog.get_close_btn().off("click").on("click", () => {
+        if (call_start == 1) {
+          change_status_complete(this.dialog.get_value("sell_type"));
+        }
+      });
     }
-}
+  }
 
-class IncomingCallPopup extends TwilioCallPopup {
-    constructor(twilio_device, conn) {
-        super(twilio_device);
-        this.conn = conn;
-        frappe.twilio_conn_dialog_map[conn] = this; // CHECK: Is this the place?
+  class IncomingCallPopup extends TwilioCallPopup {
+    constructor(twilio_device, call) {
+      super(twilio_device);
+      this.call = call;
+      linkPopup(call, this);
     }
 
     get_title(caller_details) {
-        let title;
-        if (caller_details){
-            title = __('Incoming Call From {0}', [caller_details.first_name]);
-        } else {
-            title = __('Incoming Call From {0}', [this.conn.parameters.From]);
-        }
-        return title;
+      if (caller_details) {
+        return __("Incoming Call From {0}", [caller_details.first_name]);
+      }
+      return __("Incoming Call From {0}", [
+        (this.call.parameters && this.call.parameters.From) || "Unknown"
+      ]);
     }
 
     set_dialog_body(caller_details) {
-        var caller_info = $(`<div></div>`);
-        let caller_details_html = '';
-        if (caller_details) {
-            for (const [key, value] of Object.entries(caller_details)) {
-                caller_details_html += `<div>${key}: ${value}</div>`;
-            }
-        } else {
-            caller_details_html += `<div>Phone Number: ${this.conn.parameters.From}</div>`;
+      let caller_details_html = "";
+      if (caller_details) {
+        for (const [key, value] of Object.entries(caller_details)) {
+          caller_details_html += `<div>${frappe.utils.escape_html(key)}: ${frappe.utils.escape_html(
+            String(value)
+          )}</div>`;
         }
-        $(`<div>${caller_details_html}</div>`).appendTo(this.dialog.modal_body);
+      } else {
+        caller_details_html += `<div>Phone Number: ${
+          (this.call.parameters && this.call.parameters.From) || ""
+        }</div>`;
+      }
+      $(`<div>${caller_details_html}</div>`).appendTo(this.dialog.modal_body);
     }
 
     show(caller_details) {
-        this.dialog = new frappe.ui.Dialog({
-            'static': 1,
-            'title': this.get_title(caller_details),
-            'minimizable': true,
-            primary_action: () => {
-                this.dialog.disable_primary_action();
-                this.conn.accept();
-            },
-            primary_action_label: __('Answer'),
-            secondary_action: () => {
-                if (this.twilio_device) {
-                    if (this.conn.status() == 'pending') {
-                        this.conn.reject();
-                        this.close();
-                    }
-                    this.twilio_device.disconnectAll();
-                }
-            },
-            secondary_action_label: __('Hang Up'),
-            onhide: () => {
-                if (this.twilio_device) {
-                    if (this.conn.status() == 'pending') {
-                        this.conn.reject();
-                        this.close();
-                    }
-                    this.twilio_device.disconnectAll();
-                }
+      this.dialog = new frappe.ui.Dialog({
+        static: 1,
+        title: this.get_title(caller_details),
+        minimizable: true,
+        primary_action_label: __("Answer"),
+        primary_action: () => {
+          this.dialog.disable_primary_action();
+          try {
+            this.call.accept();
+          } catch (e) {
+            console.error("[Twilio] call.accept failed:", e);
+            this.dialog.enable_primary_action();
+          }
+        },
+        secondary_action_label: __("Hang Up"),
+        secondary_action: () => {
+          try {
+            if (this.call.status && this.call.status() === "pending") {
+              this.call.reject();
+              this.close();
             }
-        });
-        this.set_dialog_body(caller_details);
-        this.show_close_button();
-        this.dialog.add_custom_action('Mute', null, 'btn-mute hide');
-        this.dialog.show();
+            this.twilio_device.disconnectAll();
+          } catch (_) { /* ignore */ }
+        },
+        onhide: () => {
+          try {
+            if (this.call.status && this.call.status() === "pending") {
+              this.call.reject();
+              this.close();
+            }
+            this.twilio_device.disconnectAll();
+          } catch (_) { /* ignore */ }
+        }
+      });
+
+      this.set_dialog_body(caller_details);
+      this.show_close_button();
+      this.dialog.add_custom_action("Mute", null, "btn-mute hide");
+      this.dialog.show();
     }
-}
+  }
 
-class DialPad extends OutgoingCallPopup {
+  class DialPad extends OutgoingCallPopup {
     constructor({ twilio_device, wrapper, events, cols, keys, css_classes, fieldnames_map }) {
-        super(twilio_device);
-        this.wrapper = wrapper;
-        this.events = events;
-        this.cols = cols;
-        this.keys = keys;
-        this.css_classes = css_classes || [];
-        this.fieldnames = fieldnames_map || {};
-
-        this.init_component();
+      super(twilio_device);
+      this.wrapper = wrapper;
+      this.events = events;
+      this.cols = cols;
+      this.keys = keys;
+      this.css_classes = css_classes || [];
+      this.fieldnames = fieldnames_map || {};
+      this.init_component();
     }
 
     init_component() {
-        this.prepare_dom();
-        this.bind_events();
+      this.prepare_dom();
+      this.bind_events();
     }
 
     prepare_dom() {
-        const { cols, keys, css_classes, fieldnames } = this;
+      const { keys, css_classes, fieldnames } = this;
 
-        function get_keys() {
-            return keys.reduce((a, row, i) => {
-                return a + row.reduce((a2, number, j) => {
-                    const class_to_append = css_classes && css_classes[i] ? css_classes[i][j] : '';
-                    const fieldname = fieldnames && fieldnames[number] ?
-                        fieldnames[number] : typeof number === 'string' ? frappe.scrub(number) : number;
+      function get_keys() {
+        return keys.reduce((a, row, i) => {
+          return (
+            a +
+            row.reduce((a2, number, j) => {
+              const class_to_append = css_classes && css_classes[i] ? css_classes[i][j] : "";
+              const fieldname =
+                fieldnames && fieldnames[number]
+                  ? fieldnames[number]
+                  : typeof number === "string"
+                  ? frappe.scrub(number)
+                  : number;
 
-                    return a2 + `<div class="dialpad-btn ${class_to_append}" data-button-value="${fieldname}">${number}</div>`;
-                }, '');
-            }, '');
-        }
+              return (
+                a2 +
+                `<div class="dialpad-btn ${class_to_append}" data-button-value="${fieldname}">${number}</div>`
+              );
+            }, "")
+          );
+        }, "");
+      }
 
-        this.wrapper.html(
-            `<i class="dialpad--pointer"></i>
-            <div class="dialpad-container">
-                <input class="dialpad-input form-control" readonly="true">
-                <div class="dialpad-keys">
-                    ${get_keys()}
-                </div>
-            </div>`
-        )
+      this.wrapper.html(
+        `<i class="dialpad--pointer"></i>
+         <div class="dialpad-container">
+           <input class="dialpad-input form-control" readonly="true">
+           <div class="dialpad-keys">
+             ${get_keys()}
+           </div>
+         </div>`
+      );
     }
 
     bind_events() {
-        const me = this;
-        this.wrapper.on('click', '.dialpad-btn', function() {
-            const $btn = $(this);
-            me.events.dialpad_event($btn);
-        });
+      const me = this;
+      this.wrapper.off("click", ".dialpad-btn").on("click", ".dialpad-btn", function () {
+        me.events.dialpad_event($(this));
+      });
     }
-}
-
-// var script = document.createElement('script');
-// document.head.appendChild(script);
-// script.onload = onload_script;
-// // Change 2: Updated the SDK URL
-// script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js"
+  }
+};

@@ -10,14 +10,20 @@ app_icon = "octicon octicon-file-directory"
 app_color = "grey"
 app_email = "developers@frappe.io"
 app_license = "MIT"
-fixtures = [{"dt": "Custom Field", "filters": [
-		[
-			"name", "in", [
-				"Notification-twilio_number", "Voice Call Settings-twilio_number"
-			]
-		]
-	]}
-, "Property Setter"]
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["name", "in", [
+                "Notification-twilio_number",
+                "Voice Call Settings-twilio_number",
+                "Event-custom_call_log"
+            ]]
+        ]
+    },
+    # "Property Setter"
+]
+
 
 # Includes in <head>
 # ------------------
@@ -102,14 +108,6 @@ doctype_js = {
 # 		"on_trash": "method"
 #	}
 # }
-fixtures = [
-    {
-        "dt": "Custom Field",
-        "filters": [
-            ["name", "in", ["Event-custom_call_log"]]
-        ]
-    }
-]
 
 
 # Scheduled Tasks
