@@ -1,10 +1,15 @@
-var con
-var call_start=0
-let def=""
+var con;
+var call_start = 0;
+let def = "";
+
 (function waitForTwilioSDK(maxRetries = 50) {
     if (window.Twilio) {
-        console.log("[DEBUG] Twilio SDK detected. Initializing onload_script...");
-        onload_script();
+        if (typeof onload_script === "function") {
+            console.log("[DEBUG] Twilio SDK detected. Initializing onload_script...");
+            onload_script();
+        } else {
+            console.error("[ERROR] onload_script is not defined yet.");
+        }
     } else if (maxRetries > 0) {
         console.log(`[DEBUG] Twilio SDK not yet loaded. Retrying... (${maxRetries} left)`);
         setTimeout(() => waitForTwilioSDK(maxRetries - 1), 300);
@@ -12,6 +17,7 @@ let def=""
         console.error("[ERROR] Twilio SDK failed to load after multiple attempts.");
     }
 })();
+
 
 
 var onload_script = function() {
