@@ -2,35 +2,25 @@ var con;
 var call_start = 0;
 let def = "";
 
-(function loadTwilioSDKAndInit() {
-    const sdkUrl = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js";
+// Load Twilio SDK dynamically and initialize after Desk is ready
+$(document).ready(() => {
+    console.log("[DEBUG] Desk ready. Loading Twilio SDK...");
 
-    // Check if script is already added
-    if (!document.querySelector(`script[src="${sdkUrl}"]`)) {
-        console.log("[DEBUG] Adding Twilio SDK script tag...");
-        const script = document.createElement("script");
-        script.src = sdkUrl;
-        script.async = true;
-        document.head.appendChild(script);
-    }
+    frappe.require("https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js", () => {
+        console.log("[DEBUG] Twilio SDK loaded successfully");
 
-    // Wait until SDK is available
-    (function waitForTwilioSDK(maxRetries = 50) {
-        if (window.Twilio) {
-            if (typeof onload_script === "function") {
-                console.log("[DEBUG] Twilio SDK detected. Initializing onload_script...");
+        if (typeof onload_script === "function") {
+            try {
                 onload_script();
-            } else {
-                console.error("[ERROR] onload_script is not defined yet.");
+                console.log("[DEBUG] onload_script executed successfully");
+            } catch (err) {
+                console.error("[ERROR] onload_script execution failed:", err);
             }
-        } else if (maxRetries > 0) {
-            console.log(`[DEBUG] Twilio SDK not yet loaded. Retrying... (${maxRetries} left)`);
-            setTimeout(() => waitForTwilioSDK(maxRetries - 1), 300);
         } else {
-            console.error("[ERROR] Twilio SDK failed to load after multiple attempts.");
+            console.error("[ERROR] onload_script is not defined");
         }
-    })();
-})();
+    });
+});
 
 
 
