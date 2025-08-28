@@ -2,14 +2,18 @@ var con;
 var call_start = 0;
 let def = "";
 
-// Load Twilio SDK dynamically and initialize after Desk is ready
+// Load Twilio SDK safely and initialize after it's ready
 $(document).ready(() => {
-    console.log("[DEBUG] Desk ready. Loading Twilio SDK...");
+    console.log("[DEBUG] Desk ready. Injecting Twilio SDK...");
 
-    frappe.require("https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js", () => {
-        console.log("[DEBUG] Twilio SDK loaded successfully");
+    const script = document.createElement("script");
+    script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js";
+    script.type = "text/javascript";
+    script.async = true;
 
-        if (typeof onload_script === "function") {
+    script.onload = () => {
+        console.log("[DEBUG] Twilio SDK loaded successfully. Initializing...");
+        if (typeof Twilio !== "undefined") {
             try {
                 onload_script();
                 console.log("[DEBUG] onload_script executed successfully");
@@ -17,9 +21,15 @@ $(document).ready(() => {
                 console.error("[ERROR] onload_script execution failed:", err);
             }
         } else {
-            console.error("[ERROR] onload_script is not defined");
+            console.error("[ERROR] Twilio is still undefined after loading SDK");
         }
-    });
+    };
+
+    script.onerror = () => {
+        console.error("[ERROR] Failed to load Twilio SDK from CDN.");
+    };
+
+    document.head.appendChild(script);
 });
 
 
