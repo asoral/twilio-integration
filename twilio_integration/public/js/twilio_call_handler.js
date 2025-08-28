@@ -7,7 +7,7 @@ $(document).ready(() => {
     console.log("[DEBUG] Desk ready. Injecting Twilio SDK...");
 
     const script = document.createElement("script");
-    script.src = "https://sdk.twilio.com/js/voice-sdk/v2.15.0/twilio-voice.min.js";
+    script.src = "https://sdk.twilio.com/js/voice-sdk/v2.2.0/twilio-voice.min.js";
     script.type = "text/javascript";
     script.async = true;
 
